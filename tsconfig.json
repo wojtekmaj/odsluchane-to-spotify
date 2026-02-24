@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "declaration": true,
+    "erasableSyntaxOnly": true,
+    "incremental": true,
+    "isolatedModules": true,
+    "isolatedDeclarations": true,
+    "lib": ["es2024"],
+    "module": "node20",
+    "moduleDetection": "force",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "es2024",
+    "verbatimModuleSyntax": true
+  }
+}
