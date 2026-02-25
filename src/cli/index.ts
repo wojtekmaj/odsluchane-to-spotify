@@ -44,6 +44,10 @@ import {
 import type {
   OAuthCallbackRequestInput,
   ParsedArgs,
+  PlaylistIndexCache,
+  PlaylistIndexCacheEntry,
+  SearchCache,
+  SearchCacheEntry,
   SelectOption,
   State,
   SyncStats,
@@ -55,6 +59,7 @@ import type { ScrapedSong } from '../odsluchane/types.ts';
 import type {
   SpotifyAuthTokenResponse,
   SpotifyCurrentUser,
+  SpotifyPlaylistTrackIndex,
   SpotifyTrack,
 } from '../spotify/types.ts';
 
@@ -64,8 +69,17 @@ const DEFAULT_TIME_TO = 24;
 const DEFAULT_WINDOW_HOURS = 2;
 const DEFAULT_SOURCE_DELAY_MS = 2500;
 const DEFAULT_SPOTIFY_DELAY_MS = 120;
+const MAX_SEARCH_CACHE_ENTRIES = 5000;
 
 const STATE_PATH = path.join(process.cwd(), '.cache', 'state.json');
+const PLAYLIST_INDEX_CACHE_PATH = path.join(process.cwd(), '.cache', 'playlist-indexes.json');
+const SEARCH_CACHE_PATH = path.join(process.cwd(), '.cache', 'search-cache.json');
+
+type ResolvedTrack = {
+  id: string;
+  uri: string;
+  matchedSongKey: string;
+};
 
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
@@ -482,40 +496,10 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
   }
 
   const displayDate = formatDdMmYyyyForDisplay(date);
-
-  console.log(`Syncing ${stationLabel} for ${displayDate}…`);
-  console.log('Loading Spotify account…');
-
-  const spotify = new SpotifyClient();
-  const currentUser = await spotify.getCurrentUser();
-
-  console.log(`Spotify account loaded: ${formatSpotifyAccountIdentity(currentUser)}`);
-  console.log(`Loading mapped playlist metadata (${playlistId})…`);
-
-  const playlistMeta = await spotify.getPlaylistMeta(playlistId);
-
-  console.log(`Playlist metadata loaded: ${playlistMeta.name} (${playlistMeta.id})`);
-
-  if (
-    !canCurrentUserWritePlaylist(
-      currentUser.id,
-      playlistMeta.owner.id,
-      playlistMeta.collaborative,
-    ) &&
-    !dryRun
-  ) {
-    throw new Error(
-      `Mapped playlist "${playlistMeta.name}" (${playlistMeta.id}) is not writable by "${currentUser.id}". ` +
-        'Choose a playlist you own or a collaborative playlist using: yarn map',
-    );
-  }
-
-  console.log('Loading playlist track index (for duplicate detection)…');
-
-  const playlistIndex = await spotify.getPlaylistTrackIndex(playlistId);
+  const windows = buildWindows(timeFrom, timeTo, windowHours);
 
   const stats: SyncStats = {
-    windowsPlanned: 0,
+    windowsPlanned: windows.length,
     windowsSkippedAlreadyDone: 0,
     windowsSkippedFuture: 0,
     windowsProcessed: 0,
@@ -526,10 +510,91 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
     songsMatched: 0,
     songsUnmatched: 0,
     tracksAdded: 0,
+    spotifySearchRequests: 0,
+    spotifySearchCacheHits: 0,
+    playlistIndexLoadedFromCache: false,
   };
 
-  const windows = buildWindows(timeFrom, timeTo, windowHours);
-  stats.windowsPlanned = windows.length;
+  console.log(`Syncing ${stationLabel} for ${displayDate}…`);
+
+  let windowsEligibleForProcessing = 0;
+  let windowsSkippedFuturePreview = 0;
+  let windowsSkippedAlreadyDonePreview = 0;
+  for (const window of windows) {
+    const windowKey = `${window.from}-${window.to}`;
+
+    if (isWindowFullyInFutureInWarsaw(date, window.from)) {
+      windowsSkippedFuturePreview += 1;
+      continue;
+    }
+
+    if (!force && isWindowAlreadyProcessed(state, stationId, date, windowKey)) {
+      windowsSkippedAlreadyDonePreview += 1;
+      continue;
+    }
+
+    windowsEligibleForProcessing += 1;
+  }
+
+  if (windowsEligibleForProcessing === 0) {
+    stats.windowsSkippedFuture = windowsSkippedFuturePreview;
+    stats.windowsSkippedAlreadyDone = windowsSkippedAlreadyDonePreview;
+    console.log('No windows left to process (already done or in the future).');
+    printSyncSummary({
+      stationId,
+      date,
+      playlistId,
+      dryRun,
+      force,
+      stats,
+    });
+    return;
+  }
+
+  const spotify = new SpotifyClient();
+  let currentUser: SpotifyCurrentUser | null = null;
+
+  if (!dryRun) {
+    console.log('Loading Spotify account…');
+    currentUser = await spotify.getCurrentUser();
+    console.log(`Spotify account loaded: ${formatSpotifyAccountIdentity(currentUser)}`);
+  } else {
+    console.log('Dry run mode: skipping Spotify account writability check.');
+  }
+
+  console.log(`Loading mapped playlist metadata (${playlistId})…`);
+
+  const playlistMeta = await spotify.getPlaylistMeta(playlistId);
+
+  console.log(`Playlist metadata loaded: ${playlistMeta.name} (${playlistMeta.id})`);
+
+  if (
+    !dryRun &&
+    currentUser &&
+    !canCurrentUserWritePlaylist(currentUser.id, playlistMeta.owner.id, playlistMeta.collaborative)
+  ) {
+    throw new Error(
+      `Mapped playlist "${playlistMeta.name}" (${playlistMeta.id}) is not writable by "${currentUser.id}". ` +
+        'Choose a playlist you own or a collaborative playlist using: yarn map',
+    );
+  }
+
+  const playlistIndexCache = await loadPlaylistIndexCache();
+  const cachedPlaylistIndex = playlistIndexCache[playlistId];
+  const cachedPlaylistSnapshotId = cachedPlaylistIndex?.snapshotId;
+
+  let playlistIndex = readPlaylistIndexCacheEntry(cachedPlaylistIndex);
+  let latestPlaylistSnapshotId = playlistMeta.snapshot_id;
+
+  if (playlistIndex && cachedPlaylistSnapshotId === playlistMeta.snapshot_id) {
+    stats.playlistIndexLoadedFromCache = true;
+    console.log('Playlist track index loaded from local cache snapshot.');
+  } else {
+    console.log('Loading playlist track index (for duplicate detection)…');
+    playlistIndex = await spotify.getPlaylistTrackIndex(playlistId);
+  }
+
+  const searchCache = await loadSearchCache();
 
   const progressReporter = windows.length > 0 ? new WindowProgressReporter(windows.length) : null;
 
@@ -600,23 +665,29 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
           continue;
         }
 
-        if (spotifyDelayMs > 0 && index > 0) {
+        const cacheEntry = searchCache[songKey];
+        if (!cacheEntry && spotifyDelayMs > 0 && index > 0) {
           await delay(spotifyDelayMs);
         }
 
-        const spotifyTrack = await findTrackForSong(spotify, song);
-        if (!spotifyTrack) {
+        const trackResolution = await resolveTrackForSong(spotify, song, searchCache);
+
+        if (trackResolution.source === 'cache') {
+          stats.spotifySearchCacheHits += 1;
+        } else {
+          stats.spotifySearchRequests += 1;
+        }
+
+        if (!trackResolution.track) {
           runSeenSongKeys.add(songKey);
           stats.songsUnmatched += 1;
           continue;
         }
 
-        const matchedSongKey = buildSongKey(
-          spotifyTrack.artists.map((artist) => artist.name).join(' '),
-          spotifyTrack.name,
-        );
+        const { track } = trackResolution;
+        const matchedSongKey = track.matchedSongKey;
 
-        if (playlistIndex.trackIds.has(spotifyTrack.id)) {
+        if (playlistIndex.trackIds.has(track.id)) {
           runSeenSongKeys.add(songKey);
           playlistIndex.songKeys.add(songKey);
           playlistIndex.songKeys.add(matchedSongKey);
@@ -624,16 +695,23 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
           continue;
         }
 
-        urisToAdd.push(spotifyTrack.uri);
+        urisToAdd.push(track.uri);
         runSeenSongKeys.add(songKey);
-        playlistIndex.trackIds.add(spotifyTrack.id);
-        playlistIndex.songKeys.add(songKey);
-        playlistIndex.songKeys.add(matchedSongKey);
+        if (!dryRun) {
+          playlistIndex.trackIds.add(track.id);
+          playlistIndex.songKeys.add(songKey);
+          playlistIndex.songKeys.add(matchedSongKey);
+        }
         stats.songsMatched += 1;
       }
 
       if (!dryRun && urisToAdd.length > 0) {
-        await spotify.addTracksToPlaylist(playlistId, urisToAdd.toReversed(), { position: 0 });
+        const snapshotId = await spotify.addTracksToPlaylist(playlistId, urisToAdd.toReversed(), {
+          position: 0,
+        });
+        if (snapshotId) {
+          latestPlaylistSnapshotId = snapshotId;
+        }
         stats.tracksAdded += urisToAdd.length;
       }
 
@@ -663,6 +741,13 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
     progressReporter?.dispose();
   }
 
+  playlistIndexCache[playlistId] = writePlaylistIndexCacheEntry(
+    latestPlaylistSnapshotId,
+    playlistIndex,
+  );
+  await savePlaylistIndexCache(playlistIndexCache);
+  await saveSearchCache(searchCache);
+
   printSyncSummary({
     stationId,
     date,
@@ -671,6 +756,237 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
     force,
     stats,
   });
+}
+
+async function resolveTrackForSong(
+  spotify: SpotifyClient,
+  song: ScrapedSong,
+  searchCache: SearchCache,
+): Promise<{ track: ResolvedTrack | null; source: 'cache' | 'search' }> {
+  const songKey = buildSongKey(song.artist, song.title);
+  const cacheEntry = searchCache[songKey];
+  const now = Date.now();
+
+  if (cacheEntry) {
+    cacheEntry.updatedAt = now;
+
+    if (cacheEntry.trackId === null) {
+      return { track: null, source: 'cache' };
+    }
+
+    if (cacheEntry.trackId && cacheEntry.trackUri) {
+      return {
+        track: {
+          id: cacheEntry.trackId,
+          uri: cacheEntry.trackUri,
+          matchedSongKey: cacheEntry.matchedSongKey ?? songKey,
+        },
+        source: 'cache',
+      };
+    }
+  }
+
+  const spotifyTrack = await findTrackForSong(spotify, song);
+
+  if (!spotifyTrack) {
+    searchCache[songKey] = {
+      trackId: null,
+      trackUri: null,
+      matchedSongKey: null,
+      updatedAt: now,
+    };
+    return { track: null, source: 'search' };
+  }
+
+  const matchedSongKey = buildSongKey(
+    spotifyTrack.artists.map((artist) => artist.name).join(' '),
+    spotifyTrack.name,
+  );
+
+  searchCache[songKey] = {
+    trackId: spotifyTrack.id,
+    trackUri: spotifyTrack.uri,
+    matchedSongKey,
+    updatedAt: now,
+  };
+
+  return {
+    track: {
+      id: spotifyTrack.id,
+      uri: spotifyTrack.uri,
+      matchedSongKey,
+    },
+    source: 'search',
+  };
+}
+
+function readPlaylistIndexCacheEntry(
+  cacheEntry: PlaylistIndexCacheEntry | undefined,
+): SpotifyPlaylistTrackIndex | null {
+  if (!cacheEntry) {
+    return null;
+  }
+
+  return {
+    trackIds: new Set(cacheEntry.trackIds),
+    songKeys: new Set(cacheEntry.songKeys),
+  };
+}
+
+function writePlaylistIndexCacheEntry(
+  snapshotId: string,
+  playlistIndex: SpotifyPlaylistTrackIndex,
+): PlaylistIndexCacheEntry {
+  return {
+    snapshotId,
+    trackIds: Array.from(playlistIndex.trackIds),
+    songKeys: Array.from(playlistIndex.songKeys),
+  };
+}
+
+async function loadPlaylistIndexCache(): Promise<PlaylistIndexCache> {
+  try {
+    const raw = await fs.readFile(PLAYLIST_INDEX_CACHE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const validated: PlaylistIndexCache = {};
+    for (const [playlistId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!playlistId || !value || typeof value !== 'object' || Array.isArray(value)) {
+        continue;
+      }
+
+      const record = value as Record<string, unknown>;
+      const snapshotId = typeof record.snapshotId === 'string' ? record.snapshotId : '';
+      const trackIds = Array.isArray(record.trackIds)
+        ? record.trackIds.filter((item): item is string => typeof item === 'string')
+        : [];
+      const songKeys = Array.isArray(record.songKeys)
+        ? record.songKeys.filter((item): item is string => typeof item === 'string')
+        : [];
+
+      if (!snapshotId) {
+        continue;
+      }
+
+      validated[playlistId] = {
+        snapshotId,
+        trackIds,
+        songKeys,
+      };
+    }
+
+    return validated;
+  } catch {
+    return {};
+  }
+}
+
+async function savePlaylistIndexCache(cache: PlaylistIndexCache): Promise<void> {
+  await fs.mkdir(path.dirname(PLAYLIST_INDEX_CACHE_PATH), { recursive: true });
+  await fs.writeFile(PLAYLIST_INDEX_CACHE_PATH, `${JSON.stringify(cache, null, 2)}\n`, 'utf8');
+}
+
+async function loadSearchCache(): Promise<SearchCache> {
+  try {
+    const raw = await fs.readFile(SEARCH_CACHE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const validated: SearchCache = {};
+    for (const [songKey, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const entry = parseSearchCacheEntry(value);
+      if (!entry) {
+        continue;
+      }
+
+      validated[songKey] = entry;
+    }
+
+    return validated;
+  } catch {
+    return {};
+  }
+}
+
+async function saveSearchCache(cache: SearchCache): Promise<void> {
+  const entries = Object.entries(cache);
+  const trimmedEntries =
+    entries.length > MAX_SEARCH_CACHE_ENTRIES
+      ? entries
+          .toSorted(([, a], [, b]) => b.updatedAt - a.updatedAt)
+          .slice(0, MAX_SEARCH_CACHE_ENTRIES)
+      : entries;
+
+  const trimmedCache = Object.fromEntries(trimmedEntries) as SearchCache;
+  await fs.mkdir(path.dirname(SEARCH_CACHE_PATH), { recursive: true });
+  await fs.writeFile(SEARCH_CACHE_PATH, `${JSON.stringify(trimmedCache, null, 2)}\n`, 'utf8');
+}
+
+function parseSearchCacheEntry(input: unknown): SearchCacheEntry | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  if (
+    !('trackId' in record) ||
+    !('trackUri' in record) ||
+    !('matchedSongKey' in record) ||
+    !('updatedAt' in record)
+  ) {
+    return null;
+  }
+
+  if (record.trackId !== null && typeof record.trackId !== 'string') {
+    return null;
+  }
+
+  if (record.trackUri !== null && typeof record.trackUri !== 'string') {
+    return null;
+  }
+
+  if (record.matchedSongKey !== null && typeof record.matchedSongKey !== 'string') {
+    return null;
+  }
+
+  if (typeof record.updatedAt !== 'number') {
+    return null;
+  }
+
+  const trackId = record.trackId as string | null;
+  const trackUri = record.trackUri as string | null;
+  const matchedSongKey = record.matchedSongKey as string | null;
+  const updatedAt = record.updatedAt;
+
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
+    return null;
+  }
+
+  if (trackId !== null && !trackId) {
+    return null;
+  }
+
+  if (trackUri !== null && !trackUri) {
+    return null;
+  }
+
+  if ((trackId === null && trackUri !== null) || (trackId !== null && trackUri === null)) {
+    return null;
+  }
+
+  return {
+    trackId,
+    trackUri,
+    matchedSongKey,
+    updatedAt,
+  };
 }
 
 async function findTrackForSong(
@@ -977,6 +1293,11 @@ function printSyncSummary(input: SyncSummaryInput): void {
   console.log(`Songs unmatched: ${input.stats.songsUnmatched}`);
   console.log(`Songs skipped (duplicates in run): ${input.stats.songsDuplicateSkipped}`);
   console.log(`Songs skipped (already in playlist): ${input.stats.songsAlreadyInPlaylistSkipped}`);
+  console.log(`Spotify searches requested: ${input.stats.spotifySearchRequests}`);
+  console.log(`Songs resolved from search cache: ${input.stats.spotifySearchCacheHits}`);
+  console.log(
+    `Playlist index loaded from cache: ${input.stats.playlistIndexLoadedFromCache ? 'yes' : 'no'}`,
+  );
   console.log(`Tracks added: ${input.stats.tracksAdded}`);
   console.log(`State file: ${STATE_PATH}`);
 }

@@ -8,6 +8,23 @@ export type State = {
   scrapedWindows: Record<string, Record<string, Record<string, true>>>;
 };
 
+export type PlaylistIndexCacheEntry = {
+  snapshotId: string;
+  trackIds: string[];
+  songKeys: string[];
+};
+
+export type PlaylistIndexCache = Record<string, PlaylistIndexCacheEntry>;
+
+export type SearchCacheEntry = {
+  trackId: string | null;
+  trackUri: string | null;
+  matchedSongKey: string | null;
+  updatedAt: number;
+};
+
+export type SearchCache = Record<string, SearchCacheEntry>;
+
 export type SyncStats = {
   windowsPlanned: number;
   windowsSkippedAlreadyDone: number;
@@ -20,6 +37,9 @@ export type SyncStats = {
   songsMatched: number;
   songsUnmatched: number;
   tracksAdded: number;
+  spotifySearchRequests: number;
+  spotifySearchCacheHits: number;
+  playlistIndexLoadedFromCache: boolean;
 };
 
 export type SelectOption = {

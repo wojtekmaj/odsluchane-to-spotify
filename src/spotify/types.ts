@@ -68,8 +68,12 @@ export type SpotifyCurrentUser = {
 export type SpotifyPlaylistMeta = {
   id: string;
   name: string;
+  snapshot_id: string;
   collaborative: boolean;
   public: boolean | null;
+  tracks: {
+    total: number;
+  };
   owner: {
     id: string;
     display_name: string | null;
@@ -89,4 +93,8 @@ export type SpotifyPlaylistTrackIndex = {
 
 export type AddTracksToPlaylistOptions = {
   position?: number;
+};
+
+export type AddTracksToPlaylistResponse = {
+  snapshot_id: string;
 };

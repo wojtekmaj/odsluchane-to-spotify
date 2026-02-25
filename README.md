@@ -142,6 +142,8 @@ By default, runtime files are saved in `.cache/`:
 
 - `.cache/state.json`
 - `.cache/stations.json`
+- `.cache/playlist-indexes.json`
+- `.cache/search-cache.json`
 
 `state.json` stores:
 
@@ -149,3 +151,7 @@ By default, runtime files are saved in `.cache/`:
 - processed windows per station/date (`from-to`), so reruns skip already scraped ranges
 
 `stations.json` stores cached station catalog from odsluchane.eu to avoid unnecessary repeated fetches.
+
+`playlist-indexes.json` stores playlist duplicate-detection index with Spotify `snapshot_id`, so unchanged playlists can skip full playlist pagination on subsequent runs.
+
+`search-cache.json` stores song-key -> Spotify match/unmatch results to avoid repeating identical `/v1/search` requests across sync runs.

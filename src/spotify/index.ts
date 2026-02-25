@@ -15,6 +15,7 @@ import {
 
 import type {
   AddTracksToPlaylistOptions,
+  AddTracksToPlaylistResponse,
   PlaylistOption,
   PlaylistTracksResponse,
   SpotifyCurrentUser,
@@ -99,9 +100,10 @@ export class SpotifyClient {
     playlistId: string,
     uris: string[],
     options?: AddTracksToPlaylistOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const position = options?.position;
     const chunks = chunk(uris, 100);
+    let latestSnapshotId: string | null = null;
 
     const iterableChunks = position === 0 ? chunks.toReversed() : chunks;
 
@@ -112,12 +114,16 @@ export class SpotifyClient {
         payload.position = position;
       }
 
-      await this.apiRequest(
+      const response = await this.apiRequest<AddTracksToPlaylistResponse>(
         'POST',
         `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items`,
         payload,
       );
+
+      latestSnapshotId = response.snapshot_id;
     }
+
+    return latestSnapshotId;
   }
 
   async getUserPlaylists(): Promise<PlaylistOption[]> {
@@ -152,7 +158,7 @@ export class SpotifyClient {
   }
 
   async getPlaylistMeta(playlistId: string): Promise<SpotifyPlaylistMeta> {
-    const fields = 'id,name,public,collaborative,owner(id,display_name)';
+    const fields = 'id,name,snapshot_id,public,collaborative,owner(id,display_name),tracks(total)';
 
     return this.apiRequest<SpotifyPlaylistMeta>(
       'GET',
