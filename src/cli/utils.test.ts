@@ -21,6 +21,7 @@ describe('parseCliArgs', () => {
       '--station',
       '40',
       '--dry-run',
+      '--verbose',
       '--from',
       '2',
       '--station-name',
@@ -30,6 +31,7 @@ describe('parseCliArgs', () => {
     expect(parsed._).toEqual(['sync']);
     expect(parsed.station).toBe('40');
     expect(parsed['dry-run']).toBe(true);
+    expect(parsed.verbose).toBe(true);
     expect(parsed.from).toBe('2');
     expect(parsed['station-name']).toBe('chill');
   });

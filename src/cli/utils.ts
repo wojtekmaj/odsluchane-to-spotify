@@ -19,6 +19,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
     'spotify-delay-ms': { type: 'string' },
     'dry-run': { type: 'boolean' },
     force: { type: 'boolean' },
+    verbose: { type: 'boolean' },
     'timeout-ms': { type: 'string' },
   } as const;
 

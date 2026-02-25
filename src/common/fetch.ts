@@ -1,5 +1,7 @@
 import { retry } from 'es-toolkit/function';
 
+import { logVerbose } from './log.ts';
+
 const MIN_RETRY_AFTER_MS = 1500;
 const MAX_RETRY_AFTER_MS = 10_000;
 const BACKOFF_STEP_MS = 1500;
@@ -37,14 +39,21 @@ export async function fetchWithRetry(
       const currentAttempt = attempt;
       attempt += 1;
       const isLastAttempt = currentAttempt >= totalAttempts - 1;
+      const method = (init.method ?? 'GET').toUpperCase();
 
       try {
+        logVerbose(
+          `HTTP request ${method} ${url} (attempt ${currentAttempt + 1}/${totalAttempts})`,
+        );
+
         const timeoutSignal = AbortSignal.timeout(timeoutMs);
         const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
         const response = await fetch(url, {
           ...init,
           signal,
         });
+
+        logVerbose(`HTTP response ${response.status} ${method} ${url}`);
 
         if (response.status === 429 && !isLastAttempt) {
           const retryAfterMs = getRetryAfterMilliseconds(response);
@@ -53,11 +62,13 @@ export async function fetchWithRetry(
           }
 
           nextDelayMs = retryAfterMs;
+          logVerbose(`HTTP retry scheduled in ${nextDelayMs}ms (rate-limited) ${method} ${url}`);
           throw new RetryableFetchError(nextDelayMs, 'Rate-limited by upstream service.');
         }
 
         if (response.status >= 500 && !isLastAttempt) {
           nextDelayMs = getBackoffDelayMilliseconds(currentAttempt + 1);
+          logVerbose(`HTTP retry scheduled in ${nextDelayMs}ms (5xx) ${method} ${url}`);
           throw new RetryableFetchError(nextDelayMs, 'Upstream service returned a server error.');
         }
 
@@ -72,6 +83,7 @@ export async function fetchWithRetry(
         }
 
         nextDelayMs = getBackoffDelayMilliseconds(currentAttempt + 1);
+        logVerbose(`HTTP retry scheduled in ${nextDelayMs}ms (network failure) ${method} ${url}`);
         throw new RetryableFetchError(nextDelayMs, 'Network request failed.');
       }
     },

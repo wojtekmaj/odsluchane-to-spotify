@@ -10,6 +10,7 @@ import { createSpinner, type Spinner } from 'nanospinner';
 import open from 'open';
 
 import { parseInputDate } from '../common/date.ts';
+import { logVerbose, setVerboseLogging } from '../common/log.ts';
 import { buildSongKey, cleanupSpaces, normalize } from '../common/string.ts';
 import {
   buildSourceUrl,
@@ -64,6 +65,9 @@ const STATE_PATH = path.join(process.cwd(), '.cache', 'state.json');
 
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
+  setVerboseLogging(Boolean(args.verbose));
+  logVerbose(`Parsed CLI args: ${JSON.stringify(args)}`);
+
   const command = args._[0];
 
   switch (command) {
@@ -945,6 +949,9 @@ sync options:
 
 auth options:
   --timeout-ms <ms>         default: 180000
+
+global options:
+  --verbose                 enable detailed debug logging
 `);
 }
 

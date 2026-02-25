@@ -84,6 +84,7 @@ If each filter matches exactly one result, mapping is saved automatically withou
 | `--playlist`      | string | no       | none    | Spotify playlist ID or full playlist URL.                                             |
 | `--station-name`  | string | no       | none    | Filters station list by name. Auto-selects when exactly one result matches.           |
 | `--playlist-name` | string | no       | none    | Filters playlist list by name. Auto-selects when exactly one result matches.          |
+| `--verbose`       | boolean flag | no | `false` | Prints detailed request/debug logs.                                                    |
 
 ### Syncing
 
@@ -122,6 +123,7 @@ yarn sync --station 40 --playlist 37i9dQZF1DX… --date 24-02-2026
 | `--spotify-delay-ms` | integer      | no          | `120`                  | Delay between Spotify search requests in a window.                                |
 | `--dry-run`          | boolean flag | no          | `false`                | Runs matching logic without modifying Spotify playlists or state.                 |
 | `--force`            | boolean flag | no          | `false`                | Ignores processed-window memory and scrapes windows again.                        |
+| `--verbose`          | boolean flag | no          | `false`                | Prints detailed request/debug logs, including Spotify rate-limit headers when available. |
 
 ## What it does
 

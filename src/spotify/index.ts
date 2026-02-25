@@ -3,9 +3,15 @@ import { chunk } from 'es-toolkit/array';
 import { withTimeout } from 'es-toolkit/promise';
 
 import { fetchWithRetry } from '../common/fetch.ts';
+import { logVerbose } from '../common/log.ts';
 import { buildSongKey, cleanupSpaces } from '../common/string.ts';
 import { getSpotifyCredentials } from './auth.ts';
-import { buildRetryAfterHint, SPOTIFY_RESPONSE_TIMEOUT_MS, safeReadResponseText } from './utils.ts';
+import {
+  buildRetryAfterHint,
+  getSpotifyRateLimitSummary,
+  SPOTIFY_RESPONSE_TIMEOUT_MS,
+  safeReadResponseText,
+} from './utils.ts';
 
 import type {
   AddTracksToPlaylistOptions,
@@ -156,6 +162,7 @@ export class SpotifyClient {
 
   private async apiRequest<T>(method: string, url: string, body?: unknown): Promise<T> {
     await this.ensureAccessToken();
+    const endpoint = new URL(url).pathname;
 
     const response = await fetchWithRetry(
       url,
@@ -173,9 +180,14 @@ export class SpotifyClient {
       },
     );
 
+    logVerbose(`Spotify API ${method} ${endpoint} -> ${response.status}`);
+    const rateLimitSummary = getSpotifyRateLimitSummary(response);
+    if (rateLimitSummary) {
+      logVerbose(`Spotify quota headers: ${rateLimitSummary}`);
+    }
+
     if (!response.ok) {
       const errorBody = await safeReadResponseText(response);
-      const endpoint = new URL(url).pathname;
       const retryAfterHint = buildRetryAfterHint(response);
       const retryAfterSuffix = retryAfterHint ? ` (${retryAfterHint})` : '';
 
@@ -195,7 +207,6 @@ export class SpotifyClient {
       )) as T;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const endpoint = new URL(url).pathname;
       throw new Error(`Spotify API response parsing failed ${method} ${endpoint}: ${message}`);
     }
   }
@@ -233,6 +244,7 @@ export class SpotifyClient {
 
     this.accessToken = tokenData.access_token;
     this.accessTokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
+    logVerbose(`Spotify access token refreshed, expires in ${tokenData.expires_in}s`);
   }
 }
 

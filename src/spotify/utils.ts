@@ -41,6 +41,32 @@ export function buildRetryAfterHint(response: Response): string {
   return `retry-after: ${retryAfter}s or ~${formatDuration(durationSeconds)}`;
 }
 
+export function getSpotifyRateLimitSummary(response: Response): string | null {
+  const remaining =
+    response.headers.get('x-ratelimit-remaining') ?? response.headers.get('x-rate-limit-remaining');
+  const limit =
+    response.headers.get('x-ratelimit-limit') ?? response.headers.get('x-rate-limit-limit');
+  const reset =
+    response.headers.get('x-ratelimit-reset') ?? response.headers.get('x-rate-limit-reset');
+  const retryAfter = response.headers.get('retry-after');
+
+  const details: string[] = [];
+  if (remaining !== null) {
+    details.push(`remaining=${remaining}`);
+  }
+  if (limit !== null) {
+    details.push(`limit=${limit}`);
+  }
+  if (reset !== null) {
+    details.push(`reset=${reset}`);
+  }
+  if (retryAfter !== null) {
+    details.push(`retry-after=${retryAfter}`);
+  }
+
+  return details.length > 0 ? details.join(', ') : null;
+}
+
 function parseRetryAfterSeconds(value: string): number | null {
   const numeric = Number(value);
   if (!Number.isNaN(numeric)) {
