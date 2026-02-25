@@ -52,6 +52,7 @@ import type {
   State,
   SyncStats,
   SyncSummaryInput,
+  TimeWindow,
   WaitForAuthorizationCodeInput,
   WindowProgressInput,
 } from '../common/types.ts';
@@ -521,14 +522,12 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
   let windowsSkippedFuturePreview = 0;
   let windowsSkippedAlreadyDonePreview = 0;
   for (const window of windows) {
-    const windowKey = `${window.from}-${window.to}`;
-
     if (isWindowFullyInFutureInWarsaw(date, window.from)) {
       windowsSkippedFuturePreview += 1;
       continue;
     }
 
-    if (!force && isWindowAlreadyProcessed(state, stationId, date, windowKey)) {
+    if (!force && isWindowAlreadyProcessed(state, stationId, date, window)) {
       windowsSkippedAlreadyDonePreview += 1;
       continue;
     }
@@ -613,7 +612,6 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
     }
 
     for (const window of windows) {
-      const windowKey = `${window.from}-${window.to}`;
       progressReporter?.update({
         completed: completedWindows,
         total: windows.length,
@@ -633,7 +631,7 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
         continue;
       }
 
-      if (!force && isWindowAlreadyProcessed(state, stationId, date, windowKey)) {
+      if (!force && isWindowAlreadyProcessed(state, stationId, date, window)) {
         stats.windowsSkippedAlreadyDone += 1;
         completedWindows += 1;
         progressReporter?.update({
@@ -715,11 +713,13 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
         stats.tracksAdded += urisToAdd.length;
       }
 
-      if (!dryRun && isWindowFullyInPastInWarsaw(date, window.to)) {
-        markWindowProcessed(state, stationId, date, windowKey);
-        await saveState(state);
-      } else if (!dryRun) {
-        stats.windowsNotMarkedNotInPast += 1;
+      if (!dryRun) {
+        const hasMarkedAnyHour = markWindowProcessed(state, stationId, date, window);
+        if (hasMarkedAnyHour) {
+          await saveState(state);
+        } else {
+          stats.windowsNotMarkedNotInPast += 1;
+        }
       }
 
       stats.windowsProcessed += 1;
@@ -1088,13 +1088,13 @@ async function loadState(): Promise<State> {
     return {
       version: APP_VERSION,
       stationPlaylists: parsed.stationPlaylists ?? {},
-      scrapedWindows: parsed.scrapedWindows ?? {},
+      scrapedHours: parsed.scrapedHours ?? {},
     };
   } catch {
     return {
       version: APP_VERSION,
       stationPlaylists: {},
-      scrapedWindows: {},
+      scrapedHours: {},
     };
   }
 }
@@ -1108,20 +1108,45 @@ function isWindowAlreadyProcessed(
   state: State,
   stationId: string,
   date: string,
-  windowKey: string,
+  window: TimeWindow,
 ): boolean {
-  return Boolean(state.scrapedWindows[stationId]?.[date]?.[windowKey]);
+  const scrapedDateHours = state.scrapedHours[stationId]?.[date];
+  if (!scrapedDateHours) {
+    return false;
+  }
+
+  for (let hour = window.from; hour < window.to; hour += 1) {
+    if (!scrapedDateHours[String(hour)]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function markWindowProcessed(
   state: State,
   stationId: string,
   date: string,
-  windowKey: string,
-): void {
-  state.scrapedWindows[stationId] ??= {};
-  state.scrapedWindows[stationId][date] ??= {};
-  state.scrapedWindows[stationId][date][windowKey] = true;
+  window: TimeWindow,
+): boolean {
+  state.scrapedHours[stationId] ??= {};
+  state.scrapedHours[stationId][date] ??= {};
+  let markedAnyHour = false;
+
+  for (let hour = window.from; hour < window.to; hour += 1) {
+    if (!isWindowFullyInPastInWarsaw(date, hour + 1)) {
+      continue;
+    }
+
+    const hourKey = String(hour);
+    if (!state.scrapedHours[stationId][date][hourKey]) {
+      state.scrapedHours[stationId][date][hourKey] = true;
+      markedAnyHour = true;
+    }
+  }
+
+  return markedAnyHour;
 }
 
 class WindowProgressReporter {
@@ -1265,7 +1290,7 @@ sync options:
   --source-delay-ms <ms>    default: 2500
   --spotify-delay-ms <ms>   default: 120
   --dry-run                 don't add tracks, only report
-  --force                   ignore processed-window memory
+  --force                   ignore processed-hour memory
 
 auth options:
   --timeout-ms <ms>         default: 180000
@@ -1287,7 +1312,7 @@ function printSyncSummary(input: SyncSummaryInput): void {
   console.log(`Windows processed: ${input.stats.windowsProcessed}`);
   console.log(`Windows skipped (already done): ${input.stats.windowsSkippedAlreadyDone}`);
   console.log(`Windows skipped (fully in future): ${input.stats.windowsSkippedFuture}`);
-  console.log(`Windows not marked (not fully in past): ${input.stats.windowsNotMarkedNotInPast}`);
+  console.log(`Windows not marked (no fully past hours): ${input.stats.windowsNotMarkedNotInPast}`);
   console.log(`Songs scraped: ${input.stats.songsScraped}`);
   console.log(`Songs matched: ${input.stats.songsMatched}`);
   console.log(`Songs unmatched: ${input.stats.songsUnmatched}`);

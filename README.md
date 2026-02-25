@@ -122,7 +122,7 @@ yarn sync --station 40 --playlist 37i9dQZF1DX… --date 24-02-2026
 | `--source-delay-ms`  | integer      | no          | `2500`                 | Delay between source requests (respectful pacing).                                |
 | `--spotify-delay-ms` | integer      | no          | `120`                  | Delay between Spotify search requests in a window.                                |
 | `--dry-run`          | boolean flag | no          | `false`                | Runs matching logic without modifying Spotify playlists or state.                 |
-| `--force`            | boolean flag | no          | `false`                | Ignores processed-window memory and scrapes windows again.                        |
+| `--force`            | boolean flag | no          | `false`                | Ignores processed-hour memory and scrapes windows again.                          |
 | `--verbose`          | boolean flag | no          | `false`                | Prints detailed request/debug logs, including Spotify rate-limit headers when available. |
 
 ## What it does
@@ -132,7 +132,7 @@ yarn sync --station 40 --playlist 37i9dQZF1DX… --date 24-02-2026
 - Adds matched tracks to your chosen playlist.
 - Inserts newly added tracks at the top of the playlist (newest first).
 - Remembers station-to-playlist mapping.
-- Remembers already-scraped date/time windows.
+- Remembers already-scraped hours per station/date.
 - Avoids adding duplicate songs already present in the playlist.
 - Uses respectful request pacing (`--source-delay-ms`, retries with backoff).
 
@@ -148,7 +148,7 @@ By default, runtime files are saved in `.cache/`:
 `state.json` stores:
 
 - station -> playlist mapping
-- processed windows per station/date (`from-to`), so reruns skip already scraped ranges
+- processed hours per station/date (`hour: true`), so reruns skip ranges covered by already scraped hours
 
 `stations.json` stores cached station catalog from odsluchane.eu to avoid unnecessary repeated fetches.
 

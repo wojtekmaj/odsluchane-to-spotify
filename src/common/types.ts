@@ -5,7 +5,7 @@ export type ParsedArgs = {
 export type State = {
   version: number;
   stationPlaylists: Record<string, string>;
-  scrapedWindows: Record<string, Record<string, Record<string, true>>>;
+  scrapedHours: Record<string, Record<string, Record<string, true>>>;
 };
 
 export type PlaylistIndexCacheEntry = {
