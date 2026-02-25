@@ -52,7 +52,11 @@ import type {
   WindowProgressInput,
 } from '../common/types.ts';
 import type { ScrapedSong } from '../odsluchane/types.ts';
-import type { SpotifyAuthTokenResponse, SpotifyTrack } from '../spotify/types.ts';
+import type {
+  SpotifyAuthTokenResponse,
+  SpotifyCurrentUser,
+  SpotifyTrack,
+} from '../spotify/types.ts';
 
 const APP_VERSION = 1;
 const DEFAULT_TIME_FROM = 0;
@@ -485,7 +489,7 @@ async function runSyncCommand(args: ParsedArgs): Promise<void> {
   const spotify = new SpotifyClient();
   const currentUser = await spotify.getCurrentUser();
 
-  console.log(`Spotify account loaded: ${currentUser.id}`);
+  console.log(`Spotify account loaded: ${formatSpotifyAccountIdentity(currentUser)}`);
   console.log(`Loading mapped playlist metadata (${playlistId})…`);
 
   const playlistMeta = await spotify.getPlaylistMeta(playlistId);
@@ -975,6 +979,16 @@ function printSyncSummary(input: SyncSummaryInput): void {
   console.log(`Songs skipped (already in playlist): ${input.stats.songsAlreadyInPlaylistSkipped}`);
   console.log(`Tracks added: ${input.stats.tracksAdded}`);
   console.log(`State file: ${STATE_PATH}`);
+}
+
+function formatSpotifyAccountIdentity(currentUser: SpotifyCurrentUser): string {
+  const displayName = cleanupSpaces(currentUser.display_name ?? '');
+
+  if (displayName) {
+    return `${displayName} (id: ${currentUser.id})`;
+  }
+
+  return currentUser.id;
 }
 
 main().catch((error: unknown) => {

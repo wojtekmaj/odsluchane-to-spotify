@@ -62,6 +62,7 @@ export type PlaylistOption = {
 export type SpotifyCurrentUser = {
   id: string;
   display_name: string | null;
+  email?: string | null;
 };
 
 export type SpotifyPlaylistMeta = {
