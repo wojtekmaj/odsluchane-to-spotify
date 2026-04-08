@@ -1181,7 +1181,7 @@ class WindowProgressReporter {
   }
 
   dispose(): void {
-    if (!this.spinner || !this.spinner.isSpinning()) {
+    if (!this.spinner?.isSpinning()) {
       return;
     }
 

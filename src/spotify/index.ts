@@ -74,8 +74,7 @@ export class SpotifyClient {
         const track = item.item ?? item.track;
 
         if (
-          !track ||
-          !track.id ||
+          !track?.id ||
           !track.name ||
           !Array.isArray(track.artists) ||
           track.artists.length === 0
